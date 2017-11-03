@@ -40,28 +40,25 @@ static const MemoryRegionOps my_dev_ops = {
     }
 };
 
-static struct arm_boot_info myboard_binfo = {
+static struct arm_boot_info binfo = {
     .loader_start = ROM_SIZE,
     .board_id = MY_BOARD_ID,
 };
 
-MyCpuState *myboard_init(MemoryRegion *system_mem)
+void myboard_init(MachineState *machine)
 {
-    DeviceState *dev;
-    int i, n, rom_size;
-    MyCpuState *s;
+	int rom_size;
 	Object *cpuobj;
-    MemoryRegion my_dev_mem;
     MemoryRegion *ram_mem;
     MemoryRegion *rom_mem;
     MemoryRegion *dev_mem;
+    MemoryRegion *system_mem = get_system_memory();
 
 	ram_mem = g_new(MemoryRegion, 1);
 	rom_mem = g_new(MemoryRegion, 1);
 	dev_mem = g_new(MemoryRegion, 1);
 
 	cpuobj = object_new(ARM_CPU_TYPE_NAME("cortex-a9"));
-	s = g_new(MyCpuState, 1);
 
 #if 0
 	/* By default A9 CPUs have EL3 enabled.  This board does not currently
@@ -72,12 +69,10 @@ MyCpuState *myboard_init(MemoryRegion *system_mem)
 	}
 #endif
 
-	s->cpu = ARM_CPU(cpuobj);
-
     /*** Memory ***/
 
     /* Test device */
-    memory_region_init_io(dev_mem, NULL, dev_ops,
+    memory_region_init_io(dev_mem, NULL, &my_dev_ops,
         NULL, "myboard.mydevmem", MY_DEV_MEM_SIZE);
     memory_region_add_subregion(system_mem, MY_DEV_MEM_ADDR,
                                 dev_mem);
@@ -103,7 +98,7 @@ MyCpuState *myboard_init(MemoryRegion *system_mem)
 						__FUNCTION__, rom_size, ROM_SIZE);
 		exit(1);
 	}
-	if (load_image_targphys(ROM_NAME, ROM_BASE, ROM_SIZE) < 0)
+	if (load_image_targphys(ROM_NAME, ROM_ADDR, ROM_SIZE) < 0)
 	{
 		fprintf(stderr, "%s: error loading '%s'\n",
 						__FUNCTION__, ROM_NAME);
@@ -112,7 +107,7 @@ MyCpuState *myboard_init(MemoryRegion *system_mem)
 
     arm_load_kernel(ARM_CPU(first_cpu), &binfo);
 
-    return s;
+    return;
 }
 
 
@@ -121,7 +116,7 @@ static void my_machine_init(MachineClass *mc)
     mc->desc = "My Machine";
     mc->init = myboard_init;
  //   mc->ignore_memory_transaction_failures = true;
-    mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-a9");
+//    mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-a9");
 	
 }
 
