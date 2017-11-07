@@ -1,3 +1,4 @@
+#if 0
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "qemu-common.h"
@@ -52,13 +53,13 @@ void myboard_init(MachineState *machine)
     MemoryRegion *ram_mem;
     MemoryRegion *rom_mem;
     MemoryRegion *dev_mem;
-    MemoryRegion *system_mem = get_system_memory();
+    MemoryRegion *sysmem = get_system_memory();
 
 	ram_mem = g_new(MemoryRegion, 1);
 	rom_mem = g_new(MemoryRegion, 1);
 	dev_mem = g_new(MemoryRegion, 1);
 
-	cpuobj = object_new(ARM_CPU_TYPE_NAME("cortex-a9"));
+	cpuobj = object_new(ARM_CPU_TYPE_NAME("cortex-m3"));
 
 #if 0
 	/* By default A9 CPUs have EL3 enabled.  This board does not currently
@@ -74,20 +75,20 @@ void myboard_init(MachineState *machine)
     /* Test device */
     memory_region_init_io(dev_mem, NULL, &my_dev_ops,
         NULL, "myboard.mydevmem", MY_DEV_MEM_SIZE);
-    memory_region_add_subregion(system_mem, MY_DEV_MEM_ADDR,
+    memory_region_add_subregion(sysmem, MY_DEV_MEM_ADDR,
                                 dev_mem);
 
     /* Internal RAM */
     memory_region_init_ram(ram_mem, NULL, "myboard.ram",
                            RAM_SIZE, &error_fatal);
-    memory_region_add_subregion(system_mem, RAM_ADDR,
+    memory_region_add_subregion(sysmem, RAM_ADDR,
                                 ram_mem);
 
     /* Internal ROM */
     memory_region_init_ram(rom_mem, NULL, "myboard.rom",
                            ROM_SIZE, &error_fatal);
     memory_region_set_readonly(rom_mem, true);
-    memory_region_add_subregion(system_mem, ROM_ADDR,
+    memory_region_add_subregion(sysmem, ROM_ADDR,
                                 rom_mem);
 
 	/* Loading ROM */
@@ -105,6 +106,10 @@ void myboard_init(MachineState *machine)
 		exit(1);
 	}
 
+	object_property_set_link(cpuobj, OBJECT(sysmem), "memory",
+							 &error_abort);
+	object_property_set_bool(cpuobj, true, "realized", NULL);
+
     arm_load_kernel(ARM_CPU(first_cpu), &binfo);
 
     return;
@@ -116,8 +121,9 @@ static void my_machine_init(MachineClass *mc)
     mc->desc = "My Machine";
     mc->init = myboard_init;
  //   mc->ignore_memory_transaction_failures = true;
-//    mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-a9");
+    mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-m3");
 	
 }
 
 DEFINE_MACHINE("myboard", my_machine_init)
+#endif
