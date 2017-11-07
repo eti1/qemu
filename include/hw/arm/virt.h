@@ -52,6 +52,8 @@
 
 enum {
     VIRT_FLASH,
+	VIRT_MSM_RTC,
+	VIRT_MSM_SEC,
     VIRT_MEM,
     VIRT_CPUPERIPHS,
     VIRT_GIC_DIST,
