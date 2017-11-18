@@ -29,6 +29,12 @@
 
 #include "msm_dev.h"
 
+const int msm_irqmap[] = {
+    [VIRT_RTC] = 2,
+    [VIRT_GIC_V2M] = 48, /* ...to 48 + NUM_GICV2M_SPIS - 1 */
+    [VIRT_PLATFORM_BUS] = 112, /* ...to 112 + PLATFORM_BUS_NUM_IRQS -1 */
+};
+
 const MemMapEntry msm_memmap[] = {
     /* Space up to 0x8000000 is reserved for a boot ROM */
     [VIRT_FLASH] =              {          0, 0x00020000 },
@@ -41,28 +47,16 @@ const MemMapEntry msm_memmap[] = {
     [VIRT_GIC_ITS] =            { 0x08080000, 0x00020000 },
     /* This redistributor space allows up to 2*64kB*123 CPUs */
     [VIRT_GIC_REDIST] =         { 0x080A0000, 0x00F60000 },
-    [VIRT_UART] =               { 0x09000000, 0x00001000 },
     [VIRT_RTC] =                { 0x09010000, 0x00001000 },
-    [VIRT_FW_CFG] =             { 0x09020000, 0x00000018 },
-    [VIRT_GPIO] =               { 0x09030000, 0x00001000 },
-    [VIRT_MMIO] =               { 0x0a000000, 0x00000200 },
     /* ...repeating for a total of NUM_VIRTIO_TRANSPORTS, each of that size */
     [VIRT_PLATFORM_BUS] =       { 0x0c000000, 0x02000000 },
+
     [VIRT_MSM_RPM_RAM] =		{ 0x00020000, 0x00028000 },
     [VIRT_MSM_TMR0] =			{ 0x00062000, 0x00001000 },
     [VIRT_MSM_RPM_TIMERS] =		{ 0x00063000, 0x00001000 },
     [VIRT_MSM_PMIC] =			{ 0x00200000, 0x00001000 },
     [VIRT_MSM_SEC] =			{ 0x00700000, 0x00008000 },
     [VIRT_MSM_RTC] =			{ 0x00902000, 0x00001000 },
-};
-
-const int msm_irqmap[] = {
-    [VIRT_UART] = 1,
-    [VIRT_RTC] = 2,
-    [VIRT_GPIO] = 7,
-    [VIRT_MMIO] = 16, /* ...to 16 + NUM_VIRTIO_TRANSPORTS - 1 */
-    [VIRT_GIC_V2M] = 48, /* ...to 48 + NUM_GICV2M_SPIS - 1 */
-    [VIRT_PLATFORM_BUS] = 112, /* ...to 112 + PLATFORM_BUS_NUM_IRQS -1 */
 };
 
 static uint64_t msm_dev_rtc_read(void *opaque, hwaddr offset,

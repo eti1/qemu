@@ -138,20 +138,6 @@ static void create_fdt(VirtMachineState *vms)
     qemu_fdt_add_subnode(fdt, "/memory");
     qemu_fdt_setprop_string(fdt, "/memory", "device_type", "memory");
 
-    /* Clock node, for the benefit of the UART. The kernel device tree
-     * binding documentation claims the PL011 node clock properties are
-     * optional but in practice if you omit them the kernel refuses to
-     * probe for the device.
-     */
-    vms->clock_phandle = qemu_fdt_alloc_phandle(fdt);
-    qemu_fdt_add_subnode(fdt, "/apb-pclk");
-    qemu_fdt_setprop_string(fdt, "/apb-pclk", "compatible", "fixed-clock");
-    qemu_fdt_setprop_cell(fdt, "/apb-pclk", "#clock-cells", 0x0);
-    qemu_fdt_setprop_cell(fdt, "/apb-pclk", "clock-frequency", 24000000);
-    qemu_fdt_setprop_string(fdt, "/apb-pclk", "clock-output-names",
-                                "clk24mhz");
-    qemu_fdt_setprop_cell(fdt, "/apb-pclk", "phandle", vms->clock_phandle);
-
     if (have_numa_distance) {
         int size = nb_numa_nodes * nb_numa_nodes * 3 * sizeof(uint32_t);
         uint32_t *matrix = g_malloc0(size);
@@ -725,27 +711,6 @@ static void create_flash(const VirtMachineState *vms,
 	g_free(nodename);
 }
 
-static FWCfgState *create_fw_cfg(const VirtMachineState *vms, AddressSpace *as)
-{
-    hwaddr base = vms->memmap[VIRT_FW_CFG].base;
-    hwaddr size = vms->memmap[VIRT_FW_CFG].size;
-    FWCfgState *fw_cfg;
-    char *nodename;
-
-    fw_cfg = fw_cfg_init_mem_wide(base + 8, base, 8, base + 16, as);
-    fw_cfg_add_i16(fw_cfg, FW_CFG_NB_CPUS, (uint16_t)smp_cpus);
-
-    nodename = g_strdup_printf("/fw-cfg@%" PRIx64, base);
-    qemu_fdt_add_subnode(vms->fdt, nodename);
-    qemu_fdt_setprop_string(vms->fdt, nodename,
-                            "compatible", "qemu,fw-cfg-mmio");
-    qemu_fdt_setprop_sized_cells(vms->fdt, nodename, "reg",
-                                 2, base, 2, size);
-    qemu_fdt_setprop(vms->fdt, nodename, "dma-coherent", NULL, 0);
-    g_free(nodename);
-    return fw_cfg;
-}
-
 static void create_platform_bus(VirtMachineState *vms, qemu_irq *pic)
 {
     DeviceState *dev;
@@ -999,8 +964,6 @@ static void machmyvirt_init(MachineState *machine)
 
     fdt_add_pmu_nodes(vms);
 
-    create_uart(vms, pic, VIRT_UART, sysmem, serial_hds[0]);
-
 	/* Load ROM, create boot flash and pheripherals*/
     create_flash(vms, sysmem);
     memory_region_allocate_system_memory(rpm_ram, NULL, "mach-virt.rpm_ram",
@@ -1012,8 +975,6 @@ static void machmyvirt_init(MachineState *machine)
 
     vms->machine_done.notify = myvirt_machine_done;
     qemu_add_machine_init_done_notifier(&vms->machine_done);
-
-	memset(&vms->bootinfo,0,sizeof(vms->bootinfo));
 
 	vms->bootinfo.ram_size = 0;
 	vms->bootinfo.kernel_filename = NULL;

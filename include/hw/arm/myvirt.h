@@ -50,28 +50,6 @@
 
 #define PPI(irq) ((irq) + 16)
 
-enum {
-    VIRT_FLASH,
-	VIRT_MSM_RPM_RAM,
-	VIRT_MSM_RTC,
-	VIRT_MSM_SEC,
-	VIRT_MSM_RPM_TIMERS,
-	VIRT_MSM_TMR0,
-	VIRT_MSM_PMIC,
-    VIRT_CPUPERIPHS,
-    VIRT_GIC_DIST,
-    VIRT_GIC_CPU,
-    VIRT_GIC_V2M,
-    VIRT_GIC_ITS,
-    VIRT_GIC_REDIST,
-    VIRT_UART,
-    VIRT_MMIO,
-    VIRT_RTC,
-    VIRT_FW_CFG,
-    VIRT_PLATFORM_BUS,
-    VIRT_GPIO,
-};
-
 typedef struct MemMapEntry {
     hwaddr base;
     hwaddr size;
