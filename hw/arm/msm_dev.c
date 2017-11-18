@@ -82,6 +82,13 @@ const MemoryRegionOps msm_dev_rtc_ops = {
     }
 };
 
+uint64_t __attribute__((weak)) msm_dev_sec_read(void *opaque, hwaddr offset,
+                            unsigned size) 
+{
+	fprintf(stderr,"msm_dev_sec(%p): read %d at 0x%x\n", opaque,size, (unsigned)offset);
+    return 0;
+}
+
 static void msm_dev_sec_write(void *opaque, hwaddr offset,
                          uint64_t value, unsigned size)
 {
