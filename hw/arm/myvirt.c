@@ -92,8 +92,8 @@
 
 static ARMPlatformBusSystemParams platform_bus_params;
 
+extern const MemMapEntry msm_memmap[];
 extern const int msm_irqmap[];
-extern const int msm_memmap[];
 
 static const char *valid_cpus[] = {
     ARM_CPU_TYPE_NAME("cortex-a15"),
@@ -607,13 +607,7 @@ static void create_uart(const VirtMachineState *vms, qemu_irq *pic, int uart,
     qemu_fdt_setprop(vms->fdt, nodename, "clock-names",
                          clocknames, sizeof(clocknames));
 
-    if (uart == VIRT_UART) {
-        qemu_fdt_setprop_string(vms->fdt, "/chosen", "stdout-path", nodename);
-    } else {
-        /* Mark as not usable by the normal world */
-        qemu_fdt_setprop_string(vms->fdt, nodename, "status", "disabled");
-        qemu_fdt_setprop_string(vms->fdt, nodename, "secure-status", "okay");
-    }
+	qemu_fdt_setprop_string(vms->fdt, "/chosen", "stdout-path", nodename);
 
     g_free(nodename);
 }
@@ -651,118 +645,6 @@ static void myvirt_powerdown_req(Notifier *n, void *opaque)
 static Notifier myvirt_system_powerdown_notifier = {
     .notify = myvirt_powerdown_req
 };
-
-static void create_gpio(const VirtMachineState *vms, qemu_irq *pic)
-{
-    char *nodename;
-    DeviceState *pl061_dev;
-    hwaddr base = vms->memmap[VIRT_GPIO].base;
-    hwaddr size = vms->memmap[VIRT_GPIO].size;
-    int irq = vms->irqmap[VIRT_GPIO];
-    const char compat[] = "arm,pl061\0arm,primecell";
-
-    pl061_dev = sysbus_create_simple("pl061", base, pic[irq]);
-
-    uint32_t phandle = qemu_fdt_alloc_phandle(vms->fdt);
-    nodename = g_strdup_printf("/pl061@%" PRIx64, base);
-    qemu_fdt_add_subnode(vms->fdt, nodename);
-    qemu_fdt_setprop_sized_cells(vms->fdt, nodename, "reg",
-                                 2, base, 2, size);
-    qemu_fdt_setprop(vms->fdt, nodename, "compatible", compat, sizeof(compat));
-    qemu_fdt_setprop_cell(vms->fdt, nodename, "#gpio-cells", 2);
-    qemu_fdt_setprop(vms->fdt, nodename, "gpio-controller", NULL, 0);
-    qemu_fdt_setprop_cells(vms->fdt, nodename, "interrupts",
-                           GIC_FDT_IRQ_TYPE_SPI, irq,
-                           GIC_FDT_IRQ_FLAGS_LEVEL_HI);
-    qemu_fdt_setprop_cell(vms->fdt, nodename, "clocks", vms->clock_phandle);
-    qemu_fdt_setprop_string(vms->fdt, nodename, "clock-names", "apb_pclk");
-    qemu_fdt_setprop_cell(vms->fdt, nodename, "phandle", phandle);
-
-    gpio_key_dev = sysbus_create_simple("gpio-key", -1,
-                                        qdev_get_gpio_in(pl061_dev, 3));
-    qemu_fdt_add_subnode(vms->fdt, "/gpio-keys");
-    qemu_fdt_setprop_string(vms->fdt, "/gpio-keys", "compatible", "gpio-keys");
-    qemu_fdt_setprop_cell(vms->fdt, "/gpio-keys", "#size-cells", 0);
-    qemu_fdt_setprop_cell(vms->fdt, "/gpio-keys", "#address-cells", 1);
-
-    qemu_fdt_add_subnode(vms->fdt, "/gpio-keys/poweroff");
-    qemu_fdt_setprop_string(vms->fdt, "/gpio-keys/poweroff",
-                            "label", "GPIO Key Poweroff");
-    qemu_fdt_setprop_cell(vms->fdt, "/gpio-keys/poweroff", "linux,code",
-                          KEY_POWER);
-    qemu_fdt_setprop_cells(vms->fdt, "/gpio-keys/poweroff",
-                           "gpios", phandle, 3, 0);
-
-    /* connect powerdown request */
-    qemu_register_powerdown_notifier(&myvirt_system_powerdown_notifier);
-
-    g_free(nodename);
-}
-
-static void create_virtio_devices(const VirtMachineState *vms, qemu_irq *pic)
-{
-    int i;
-    hwaddr size = vms->memmap[VIRT_MMIO].size;
-
-    /* We create the transports in forwards order. Since qbus_realize()
-     * prepends (not appends) new child buses, the incrementing loop below will
-     * create a list of virtio-mmio buses with decreasing base addresses.
-     *
-     * When a -device option is processed from the command line,
-     * qbus_find_recursive() picks the next free virtio-mmio bus in forwards
-     * order. The upshot is that -device options in increasing command line
-     * order are mapped to virtio-mmio buses with decreasing base addresses.
-     *
-     * When this code was originally written, that arrangement ensured that the
-     * guest Linux kernel would give the lowest "name" (/dev/vda, eth0, etc) to
-     * the first -device on the command line. (The end-to-end order is a
-     * function of this loop, qbus_realize(), qbus_find_recursive(), and the
-     * guest kernel's name-to-address assignment strategy.)
-     *
-     * Meanwhile, the kernel's traversal seems to have been reversed; see eg.
-     * the message, if not necessarily the code, of commit 70161ff336.
-     * Therefore the loop now establishes the inverse of the original intent.
-     *
-     * Unfortunately, we can't counteract the kernel change by reversing the
-     * loop; it would break existing command lines.
-     *
-     * In any case, the kernel makes no guarantee about the stability of
-     * enumeration order of virtio devices (as demonstrated by it changing
-     * between kernel versions). For reliable and stable identification
-     * of disks users must use UUIDs or similar mechanisms.
-     */
-    for (i = 0; i < NUM_VIRTIO_TRANSPORTS; i++) {
-        int irq = vms->irqmap[VIRT_MMIO] + i;
-        hwaddr base = vms->memmap[VIRT_MMIO].base + i * size;
-
-        sysbus_create_simple("virtio-mmio", base, pic[irq]);
-    }
-
-    /* We add dtb nodes in reverse order so that they appear in the finished
-     * device tree lowest address first.
-     *
-     * Note that this mapping is independent of the loop above. The previous
-     * loop influences virtio device to virtio transport assignment, whereas
-     * this loop controls how virtio transports are laid out in the dtb.
-     */
-    for (i = NUM_VIRTIO_TRANSPORTS - 1; i >= 0; i--) {
-        char *nodename;
-        int irq = vms->irqmap[VIRT_MMIO] + i;
-        hwaddr base = vms->memmap[VIRT_MMIO].base + i * size;
-
-        nodename = g_strdup_printf("/virtio_mmio@%" PRIx64, base);
-        qemu_fdt_add_subnode(vms->fdt, nodename);
-        qemu_fdt_setprop_string(vms->fdt, nodename,
-                                "compatible", "virtio,mmio");
-        qemu_fdt_setprop_sized_cells(vms->fdt, nodename, "reg",
-                                     2, base, 2, size);
-        qemu_fdt_setprop_cells(vms->fdt, nodename, "interrupts",
-                               GIC_FDT_IRQ_TYPE_SPI, irq,
-                               GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
-        qemu_fdt_setprop(vms->fdt, nodename, "dma-coherent", NULL, 0);
-        g_free(nodename);
-    }
-}
 
 static void create_one_flash(const char *name, hwaddr flashbase,
                              hwaddr flashsize, const char *file,
@@ -823,38 +705,24 @@ static void create_one_flash(const char *name, hwaddr flashbase,
 }
 
 static void create_flash(const VirtMachineState *vms,
-                         MemoryRegion *sysmem,
-                         MemoryRegion *secure_sysmem)
+                         MemoryRegion *sysmem)
 {
-    /* Create two flash devices to fill the VIRT_FLASH space in the memmap.
-     * Any file passed via -bios goes in the first of these.
-     * sysmem is the system memory space. secure_sysmem is the secure view
-     * of the system, and the first flash device should be made visible only
-     * there. The second flash device is visible to both secure and nonsecure.
-     * If sysmem == secure_sysmem this means there is no separate Secure
-     * address space and both flash devices are generally visible.
-     */
-    hwaddr flashsize = vms->memmap[VIRT_FLASH].size ; /// 2;
+    hwaddr flashsize = vms->memmap[VIRT_FLASH].size;
     hwaddr flashbase = vms->memmap[VIRT_FLASH].base;
     char *nodename;
 
     create_one_flash("virt.flash0", flashbase, flashsize,
-                     bios_name, secure_sysmem);
+                     bios_name, sysmem);
 
-    if (sysmem == secure_sysmem) {
-        /* Report both flash devices as a single node in the DT */
-        nodename = g_strdup_printf("/flash@%" PRIx64, flashbase);
-        qemu_fdt_add_subnode(vms->fdt, nodename);
-        qemu_fdt_setprop_string(vms->fdt, nodename, "compatible", "cfi-flash");
-        qemu_fdt_setprop_sized_cells(vms->fdt, nodename, "reg",
-                                     2, flashbase, 2, flashsize,
-                                     2, flashbase + flashsize, 2, flashsize);
-        qemu_fdt_setprop_cell(vms->fdt, nodename, "bank-width", 4);
-        g_free(nodename);
-    } else {
-		fprintf(stderr,"sysmem\n");
-		exit(1);
-    }
+	/* Report both flash devices as a single node in the DT */
+	nodename = g_strdup_printf("/flash@%" PRIx64, flashbase);
+	qemu_fdt_add_subnode(vms->fdt, nodename);
+	qemu_fdt_setprop_string(vms->fdt, nodename, "compatible", "cfi-flash");
+	qemu_fdt_setprop_sized_cells(vms->fdt, nodename, "reg",
+								 2, flashbase, 2, flashsize,
+								 2, flashbase + flashsize, 2, flashsize);
+	qemu_fdt_setprop_cell(vms->fdt, nodename, "bank-width", 4);
+	g_free(nodename);
 }
 
 static FWCfgState *create_fw_cfg(const VirtMachineState *vms, AddressSpace *as)
@@ -997,17 +865,15 @@ static void machmyvirt_init(MachineState *machine)
     const CPUArchIdList *possible_cpus;
     qemu_irq pic[NUM_IRQS];
     MemoryRegion *sysmem = get_system_memory();
-    MemoryRegion *secure_sysmem = NULL;
     int n, myvirt_max_cpus;
 #if 0
     MemoryRegion *ram = g_new(MemoryRegion, 1);
 #endif
     MemoryRegion *rpm_ram = g_new(MemoryRegion, 1);
-    bool firmware_loaded = bios_name || drive_get(IF_PFLASH, 0, 0);
 
-	if(vms->secure)
+	if (!bios_name)
 	{
-		fprintf(stderr,"secure\n");
+		fprintf(stderr,"missing bios\n");
 		exit(1);
 	}
 
@@ -1032,23 +898,7 @@ static void machmyvirt_init(MachineState *machine)
         exit(1);
     }
 
-    /* If we have an EL3 boot ROM then the assumption is that it will
-     * implement PSCI itself, so disable QEMU's internal implementation
-     * so it doesn't get in the way. Instead of starting secondary
-     * CPUs in PSCI powerdown state we will start them all running and
-     * let the boot ROM sort them out.
-     * The usual case is that we do use QEMU's PSCI implementation;
-     * if the guest has EL2 then we will use SMC as the conduit,
-     * and otherwise we will use HVC (for backwards compatibility and
-     * because if we're using KVM then we must use HVC).
-     */
-    if (vms->secure && firmware_loaded) {
-        vms->psci_conduit = QEMU_PSCI_CONDUIT_DISABLED;
-    } else if (vms->virt) {
-        vms->psci_conduit = QEMU_PSCI_CONDUIT_SMC;
-    } else {
-        vms->psci_conduit = QEMU_PSCI_CONDUIT_HVC;
-    }
+	vms->psci_conduit = QEMU_PSCI_CONDUIT_DISABLED;
 
     /* The maximum number of CPUs depends on the GIC version, or on how
      * many redistributors we can fit into the memory map.
@@ -1068,10 +918,11 @@ static void machmyvirt_init(MachineState *machine)
 
     vms->smp_cpus = smp_cpus;
 
-    if (machine->ram_size > vms->memmap[VIRT_MEM].size) {
-        error_report("mach-virt: cannot model more than %dGB RAM", RAMLIMIT_GB);
-        exit(1);
-    }
+	if (vms->smp_cpus  != 1)
+	{
+		fprintf(stderr,"1 cpu\n");
+		exit(1);
+	}
 
     if (vms->virt && kvm_enabled()) {
         error_report("mach-virt: KVM does not support providing "
@@ -1082,20 +933,6 @@ static void machmyvirt_init(MachineState *machine)
     if (vms->secure) {
 		fprintf(stderr,"secure 2\n");
 		exit(1);
-        if (kvm_enabled()) {
-            error_report("mach-virt: KVM does not support Security extensions");
-            exit(1);
-        }
-
-        /* The Secure view of the world is the same as the NonSecure,
-         * but with a few extra devices. Create it as a container region
-         * containing the system memory at low priority; any secure-only
-         * devices go in at higher priority and take precedence.
-         */
-        secure_sysmem = g_new(MemoryRegion, 1);
-        memory_region_init(secure_sysmem, OBJECT(machine), "secure-memory",
-                           UINT64_MAX);
-        memory_region_add_subregion_overlap(secure_sysmem, 0, sysmem, -1);
     }
 
     create_fdt(vms);
@@ -1149,11 +986,6 @@ static void machmyvirt_init(MachineState *machine)
 
         object_property_set_link(cpuobj, OBJECT(sysmem), "memory",
                                  &error_abort);
-        if (vms->secure) {
-            object_property_set_link(cpuobj, OBJECT(secure_sysmem),
-                                     "secure-memory", &error_abort);
-        }
-
         object_property_set_bool(cpuobj, true, "realized", NULL);
         object_unref(cpuobj);
     }
@@ -1163,52 +995,35 @@ static void machmyvirt_init(MachineState *machine)
 
 	fprintf(stderr,"RAM size: %d\n", machine->ram_size);
 
-#if 0
-    memory_region_allocate_system_memory(ram, NULL, "mach-virt.ram",
-                                         machine->ram_size);
-    memory_region_add_subregion(sysmem, vms->memmap[VIRT_MEM].base, ram);
-#endif
-
-	create_msm_peripherals(vms, sysmem);
-
-    create_flash(vms, sysmem, secure_sysmem ? secure_sysmem : sysmem);
-
     create_gic(vms, pic);
 
     fdt_add_pmu_nodes(vms);
 
     create_uart(vms, pic, VIRT_UART, sysmem, serial_hds[0]);
 
+	/* Load ROM, create boot flash and pheripherals*/
+    create_flash(vms, sysmem);
     memory_region_allocate_system_memory(rpm_ram, NULL, "mach-virt.rpm_ram",
                                         vms->memmap[VIRT_MSM_RPM_RAM].size );
     memory_region_add_subregion(sysmem, vms->memmap[VIRT_MSM_RPM_RAM].base, rpm_ram);
+	create_msm_peripherals(vms, sysmem);
 
     create_rtc(vms, pic);
-
-    create_gpio(vms, pic);
-
-    /* Create mmio transports, so the user can create virtio backends
-     * (which will be automatically plugged in to the transports). If
-     * no backend is created the transport will just sit harmlessly idle.
-     */
-    create_virtio_devices(vms, pic);
-
-    vms->fw_cfg = create_fw_cfg(vms, &address_space_memory);
-    rom_set_fw(vms->fw_cfg);
 
     vms->machine_done.notify = myvirt_machine_done;
     qemu_add_machine_init_done_notifier(&vms->machine_done);
 
-    vms->bootinfo.ram_size = machine->ram_size;
-    vms->bootinfo.kernel_filename = machine->kernel_filename;
-    vms->bootinfo.kernel_cmdline = machine->kernel_cmdline;
-    vms->bootinfo.initrd_filename = machine->initrd_filename;
-    vms->bootinfo.nb_cpus = smp_cpus;
+	memset(&vms->bootinfo,0,sizeof(vms->bootinfo));
+
+	vms->bootinfo.ram_size = 0;
+	vms->bootinfo.kernel_filename = NULL;
+	vms->bootinfo.kernel_cmdline = NULL;
+	vms->bootinfo.initrd_filename = NULL;
+    vms->bootinfo.nb_cpus = 1;
     vms->bootinfo.board_id = -1;
-    vms->bootinfo.loader_start = vms->memmap[VIRT_MEM].base;
+    vms->bootinfo.loader_start = 0;
     vms->bootinfo.get_dtb = machmyvirt_dtb;
-    vms->bootinfo.firmware_loaded = firmware_loaded;
-    arm_load_kernel(ARM_CPU(first_cpu), &vms->bootinfo);
+    vms->bootinfo.firmware_loaded = 0;
 
     /*
      * arm_load_kernel machine init done notifier registration must
