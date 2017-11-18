@@ -56,7 +56,7 @@
 #include "hw/smbios/smbios.h"
 #include "qapi/visitor.h"
 #include "standard-headers/linux/input.h"
-#include "msm_dev.h"
+#include "my_dev.h"
 
 #define DEFINE_VIRT_MACHINE_LATEST(major, minor, latest) \
     static void myvirt_##major##_##minor##_class_init(ObjectClass *oc, \
@@ -92,8 +92,8 @@
 
 static ARMPlatformBusSystemParams platform_bus_params;
 
-extern const MemMapEntry msm_memmap[];
-extern const int msm_irqmap[];
+extern const MemMapEntry my_memmap[];
+extern const int my_irqmap[];
 
 static const char *valid_cpus[] = {
     ARM_CPU_TYPE_NAME("cortex-a15"),
@@ -969,7 +969,7 @@ static void machmyvirt_init(MachineState *machine)
     memory_region_allocate_system_memory(rpm_ram, NULL, "mach-virt.rpm_ram",
                                         vms->memmap[VIRT_MSM_RPM_RAM].size );
     memory_region_add_subregion(sysmem, vms->memmap[VIRT_MSM_RPM_RAM].base, rpm_ram);
-	create_msm_peripherals(vms, sysmem);
+	create_my_peripherals(vms, sysmem);
 
     create_rtc(vms, pic);
 
@@ -1205,8 +1205,8 @@ static void myvirt_2_10_instance_init(Object *obj)
                                         NULL);
     }
 
-    vms->memmap = msm_memmap;
-    vms->irqmap = msm_irqmap;
+    vms->memmap = my_memmap;
+    vms->irqmap = my_irqmap;
 }
 
 static void myvirt_machine_2_10_options(MachineClass *mc)
