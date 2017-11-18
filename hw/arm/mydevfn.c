@@ -15,45 +15,54 @@
 #include "hw/loader.h"
 #include "exec/address-spaces.h"
 #include "qemu/bitops.h"
-/*
-#include "qemu/error-report.h"
-#include "hw/pci-host/gpex.h"
-#include "hw/arm/sysbus-fdt.h"
-#include "hw/platform-bus.h"
-#include "hw/arm/fdt.h"
-#include "hw/intc/arm_gic.h"
-#include "hw/intc/arm_gicv3_common.h"
-#include "hw/smbios/smbios.h"
-*/
 
 #include "my_dev.h"
 
-uint64_t devfn_sec_ctrl_read(void *opaque, hwaddr offset,
+void printregs(void)
+{
+	int i;
+
+#if 0
+	for(i=0;i<16;i++)
+	{
+		fprintf(stderr,"r%d: %8x\n",i,ARM_CPU(qemu_get_cpu(0))->env.regs[i]);
+	}
+#endif
+}
+
+uint64_t devfn_sec_ctrl_read(void *vms_, hwaddr offset,
                             unsigned size)
 {
-	uint64_t v;
+	uint64_t v = 0;
+
+	printregs();
+    fprintf(stderr,"%6x: dev sec_ctrl(00700000): READ (%d) at %s", 
+			ARM_CPU(qemu_get_cpu(0))->env.regs[15], size, FINDREG(sec_ctrl, offset));
 
 	switch(offset)
 	{
 	case 0x6034:
-		/* Start from rom */
+		/* Start from ROM*/
 		v = 1;
 		break;
 	default:
-		v = 0;
 		break;
 	}
 
-	fprintf(stderr,"dev_sec: read %d at 0x%x -> 0x%llx\n", size, (unsigned)offset, v);
+	fprintf(stderr, " -> %8x\n", (unsigned)v);
 
     return v;
 }
 
 static int rpm_delay_state = 0;
-void devfn_rpm_write(void *opaque, hwaddr offset,
+void devfn_rpm_write(void *vms_, hwaddr offset,
                          uint64_t value, unsigned size)
 {
-    fprintf(stderr,"dev rpm(00060000): write %d: 0x%x at 0x%x\n", size, (unsigned)value,(unsigned) offset);
+    fprintf(stderr,"%6x: dev rpm(00060000): WRITE(%d) at %s -> %8x\n",
+			ARM_CPU(qemu_get_cpu(0))->env.regs[15],
+			size, FINDREG(rpm,offset),(unsigned)value );
+
+	printregs();
 	switch(offset)
 	{
 	case 0x200c:
@@ -64,11 +73,14 @@ void devfn_rpm_write(void *opaque, hwaddr offset,
 	}
 }
 
-uint64_t devfn_rpm_read(void *opaque, hwaddr offset,
+uint64_t devfn_rpm_read(void *vms_, hwaddr offset,
                             unsigned size)
 {
-	uint64_t v;
+	uint64_t v = 0;
 
+	printregs();
+    fprintf(stderr,"%6x: dev rpm(00060000): READ (%d) at %s", 
+			ARM_CPU(qemu_get_cpu(0))->env.regs[15], size, FINDREG(rpm, offset));
 	switch(offset)
 	{
 	case 0x2004:
@@ -90,21 +102,46 @@ uint64_t devfn_rpm_read(void *opaque, hwaddr offset,
 		v = 0;
 		break;
 	}
-
-	fprintf(stderr,"dev_rpm: read %d at 0x%x -> 0x%llx\n", size, (unsigned)offset, v);
+	fprintf(stderr, " -> %8x\n", (unsigned)v);
 
     return v;
 }
 
-uint64_t devfn_sdc3_bam_read(VirtMachineState *vms, hwaddr offset,
+uint64_t devfn_sdc3_read(void *vms_, hwaddr offset,
                             unsigned size)
 {
-    fprintf(stderr,"dev sdc3_bam(12182000): read %d at 0x%x\n", size, (unsigned)offset);
-    return 0;
+	uint64_t v = 0;
+
+	printregs();
+    fprintf(stderr,"%6x: dev sdc3(12180000): READ (%d) at %s", 
+			ARM_CPU(qemu_get_cpu(0))->env.regs[15], size, FINDREG(sdc3, offset));
+
+	switch(offset)
+	{
+	case 0:
+		break;
+	default:
+		break;
+	}
+	fprintf(stderr, " -> %8x\n", (unsigned)v);
+
+    return v;
 }
 
-void devfn_sdc3_bam_write(void *opaque, hwaddr offset,
+void devfn_sdc3_write(void *vms_, hwaddr offset,
                          uint64_t value, unsigned size)
 {
-    fprintf(stderr,"dev sdc3_bam(12182000): write %d: 0x%x at 0x%x\n", size, (unsigned)value,(unsigned) offset);
+	printregs();
+    fprintf(stderr,"%6x: dev sdc3(12180000): WRITE(%d) at %s -> %8x\n",
+			ARM_CPU(qemu_get_cpu(0))->env.regs[15],
+			size, FINDREG(sdc3,offset),(unsigned)value );
+
+	switch(offset)
+	{
+	case 0:
+		break;
+	default:
+		break;
+	}
 }
+

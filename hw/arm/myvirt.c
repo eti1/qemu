@@ -558,44 +558,6 @@ static void create_gic(VirtMachineState *vms, qemu_irq *pic)
     }
 }
 
-static void create_uart(const VirtMachineState *vms, qemu_irq *pic, int uart,
-                        MemoryRegion *mem, Chardev *chr)
-{
-    char *nodename;
-    hwaddr base = vms->memmap[uart].base;
-    hwaddr size = vms->memmap[uart].size;
-    int irq = vms->irqmap[uart];
-    const char compat[] = "arm,pl011\0arm,primecell";
-    const char clocknames[] = "uartclk\0apb_pclk";
-    DeviceState *dev = qdev_create(NULL, "pl011");
-    SysBusDevice *s = SYS_BUS_DEVICE(dev);
-
-    qdev_prop_set_chr(dev, "chardev", chr);
-    qdev_init_nofail(dev);
-    memory_region_add_subregion(mem, base,
-                                sysbus_mmio_get_region(s, 0));
-    sysbus_connect_irq(s, 0, pic[irq]);
-
-    nodename = g_strdup_printf("/pl011@%" PRIx64, base);
-    qemu_fdt_add_subnode(vms->fdt, nodename);
-    /* Note that we can't use setprop_string because of the embedded NUL */
-    qemu_fdt_setprop(vms->fdt, nodename, "compatible",
-                         compat, sizeof(compat));
-    qemu_fdt_setprop_sized_cells(vms->fdt, nodename, "reg",
-                                     2, base, 2, size);
-    qemu_fdt_setprop_cells(vms->fdt, nodename, "interrupts",
-                               GIC_FDT_IRQ_TYPE_SPI, irq,
-                               GIC_FDT_IRQ_FLAGS_LEVEL_HI);
-    qemu_fdt_setprop_cells(vms->fdt, nodename, "clocks",
-                               vms->clock_phandle, vms->clock_phandle);
-    qemu_fdt_setprop(vms->fdt, nodename, "clock-names",
-                         clocknames, sizeof(clocknames));
-
-	qemu_fdt_setprop_string(vms->fdt, "/chosen", "stdout-path", nodename);
-
-    g_free(nodename);
-}
-
 static void create_rtc(const VirtMachineState *vms, qemu_irq *pic)
 {
     char *nodename;
@@ -626,9 +588,11 @@ static void myvirt_powerdown_req(Notifier *n, void *opaque)
     qemu_set_irq(qdev_get_gpio_in(gpio_key_dev, 0), 1);
 }
 
+#if 0
 static Notifier myvirt_system_powerdown_notifier = {
     .notify = myvirt_powerdown_req
 };
+#endif
 
 static void create_one_flash(const char *name, hwaddr flashbase,
                              hwaddr flashsize, const char *file,
@@ -647,7 +611,7 @@ static void create_one_flash(const char *name, hwaddr flashbase,
                             &error_abort);
     }
 
-	fprintf(stderr,"flashsize: %llx, sectorlength: %llx\n", flashsize, sectorlength);
+	fprintf(stderr,"flashsize: %llx, sectorlength: %llx\n", (unsigned long long)flashsize, (unsigned long long)sectorlength);
 
     qdev_prop_set_uint32(dev, "num-blocks", flashsize / sectorlength);
     qdev_prop_set_uint64(dev, "sector-length", sectorlength);
@@ -956,7 +920,7 @@ static void machmyvirt_init(MachineState *machine)
     fdt_add_cpu_nodes(vms);
     fdt_add_psci_node(vms);
 
-	fprintf(stderr,"RAM size: %d\n", machine->ram_size);
+	fprintf(stderr,"RAM size: %u\n", (unsigned)machine->ram_size);
 
     create_gic(vms, pic);
 
