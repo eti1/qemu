@@ -82,27 +82,6 @@ const MemoryRegionOps msm_dev_rtc_ops = {
     }
 };
 
-static uint64_t msm_dev_sec_read(void *opaque, hwaddr offset,
-                            unsigned size)
-{
-	uint64_t v;
-
-	switch(offset)
-	{
-	case 0x6034:
-		/* Start from rom */
-		v = 1;
-		break;
-	default:
-		v = 0;
-		break;
-	}
-
-	fprintf(stderr,"msm_dev_sec(%p): read %d at 0x%x -> 0x%llx\n", opaque,size, (unsigned)offset, v);
-
-    return v;
-}
-
 static void msm_dev_sec_write(void *opaque, hwaddr offset,
                          uint64_t value, unsigned size)
 {

@@ -1,5 +1,3 @@
-#ifndef MSM_DEV_H
-#define MSM_DEV_H
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "hw/sysbus.h"
@@ -17,7 +15,6 @@
 #include "hw/loader.h"
 #include "exec/address-spaces.h"
 #include "qemu/bitops.h"
-
 #include "qemu/error-report.h"
 #include "hw/pci-host/gpex.h"
 #include "hw/arm/sysbus-fdt.h"
@@ -30,24 +27,25 @@
 #include "qapi/visitor.h"
 #include "standard-headers/linux/input.h"
 
-void create_msm_peripherals(VirtMachineState *vms, MemoryRegion *sysmem);
+#include "msm_dev.h"
 
-enum {
-    VIRT_FLASH,
-	VIRT_MSM_RPM_RAM,
-	VIRT_MSM_RTC,
-	VIRT_MSM_SEC,
-	VIRT_MSM_RPM_TIMERS,
-	VIRT_MSM_TMR0,
-	VIRT_MSM_PMIC,
-    VIRT_CPUPERIPHS,
-    VIRT_GIC_DIST,
-    VIRT_GIC_CPU,
-    VIRT_GIC_V2M,
-    VIRT_GIC_ITS,
-    VIRT_GIC_REDIST,
-    VIRT_RTC,
-    VIRT_PLATFORM_BUS,
-};
+uint64_t msm_dev_sec_read(void *opaque, hwaddr offset,
+                            unsigned size)
+{
+	uint64_t v;
 
-#endif
+	switch(offset)
+	{
+	case 0x6034:
+		/* Start from rom */
+		v = 1;
+		break;
+	default:
+		v = 0;
+		break;
+	}
+
+	fprintf(stderr,"msm_dev_sec(%p): read %d at 0x%x -> 0x%llx\n", opaque,size, (unsigned)offset, v);
+
+    return v;
+}
