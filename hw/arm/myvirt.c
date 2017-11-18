@@ -52,10 +52,8 @@
 #include "hw/arm/fdt.h"
 #include "hw/intc/arm_gic.h"
 #include "hw/intc/arm_gicv3_common.h"
-#include "kvm_arm.h"
 #include "hw/smbios/smbios.h"
-#include "qapi/visitor.h"
-#include "standard-headers/linux/input.h"
+
 #include "my_dev.h"
 
 #define DEFINE_VIRT_MACHINE_LATEST(major, minor, latest) \
@@ -967,8 +965,8 @@ static void machmyvirt_init(MachineState *machine)
 	/* Load ROM, create boot flash and pheripherals*/
     create_flash(vms, sysmem);
     memory_region_allocate_system_memory(rpm_ram, NULL, "mach-virt.rpm_ram",
-                                        vms->memmap[VIRT_MSM_RPM_RAM].size );
-    memory_region_add_subregion(sysmem, vms->memmap[VIRT_MSM_RPM_RAM].base, rpm_ram);
+                                        vms->memmap[VIRT_RPM_RAM].size );
+    memory_region_add_subregion(sysmem, vms->memmap[VIRT_RPM_RAM].base, rpm_ram);
 	create_my_peripherals(vms, sysmem);
 
     create_rtc(vms, pic);

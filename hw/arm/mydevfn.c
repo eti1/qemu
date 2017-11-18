@@ -15,6 +15,7 @@
 #include "hw/loader.h"
 #include "exec/address-spaces.h"
 #include "qemu/bitops.h"
+/*
 #include "qemu/error-report.h"
 #include "hw/pci-host/gpex.h"
 #include "hw/arm/sysbus-fdt.h"
@@ -22,12 +23,10 @@
 #include "hw/arm/fdt.h"
 #include "hw/intc/arm_gic.h"
 #include "hw/intc/arm_gicv3_common.h"
-#include "kvm_arm.h"
 #include "hw/smbios/smbios.h"
-#include "qapi/visitor.h"
-#include "standard-headers/linux/input.h"
+*/
 
-#include "msm_dev.h"
+#include "my_dev.h"
 
 uint64_t devfn_sec_ctrl_read(void *opaque, hwaddr offset,
                             unsigned size)
@@ -50,7 +49,7 @@ uint64_t devfn_sec_ctrl_read(void *opaque, hwaddr offset,
     return v;
 }
 
-static rpm_delay_state = 0;
+static int rpm_delay_state = 0;
 void devfn_rpm_write(void *opaque, hwaddr offset,
                          uint64_t value, unsigned size)
 {
