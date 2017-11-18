@@ -1066,8 +1066,10 @@ void arm_load_kernel(ARMCPU *cpu, struct arm_boot_info *info)
      * arranging that we start it correctly.
      */
     for (cs = CPU(cpu); cs; cs = CPU_NEXT(cs)) {
+		fprintf(stderr, "reset cpu\n");
         qemu_register_reset(do_cpu_reset, ARM_CPU(cs));
     }
+	fprintf(stderr, "arm load kernel done\n");
 }
 
 static const TypeInfo arm_linux_boot_if_info = {

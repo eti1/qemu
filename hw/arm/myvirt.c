@@ -33,7 +33,7 @@
 #include "hw/sysbus.h"
 #include "hw/arm/arm.h"
 #include "hw/arm/primecell.h"
-#include "hw/arm/virt.h"
+#include "hw/arm/myvirt.h"
 #include "hw/devices.h"
 #include "net/net.h"
 #include "sysemu/block-backend.h"
@@ -92,76 +92,8 @@
 
 static ARMPlatformBusSystemParams platform_bus_params;
 
-/* RAM limit in GB. Since VIRT_MEM starts at the 1GB mark, this means
- * RAM can go up to the 256GB mark, leaving 256GB of the physical
- * address space unallocated and free for future use between 256G and 512G.
- * If we need to provide more RAM to VMs in the future then we need to:
- *  * allocate a second bank of RAM starting at 2TB and working up
- *  * fix the DT and ACPI table generation code in QEMU to correctly
- *    report two split lumps of RAM to the guest
- *  * fix KVM in the host kernel to allow guests with >40 bit address spaces
- * (We don't want to fill all the way up to 512GB with RAM because
- * we might want it for non-RAM purposes later. Conversely it seems
- * reasonable to assume that anybody configuring a VM with a quarter
- * of a terabyte of RAM will be doing it on a host with more than a
- * terabyte of physical address space.)
- */
-#define RAMLIMIT_GB 255
-#define RAMLIMIT_BYTES (RAMLIMIT_GB * 1024ULL * 1024 * 1024)
-
-/* Addresses and sizes of our components.
- * 0..128MB is space for a flash device so we can run bootrom code such as UEFI.
- * 128MB..256MB is used for miscellaneous device I/O.
- * 256MB..1GB is reserved for possible future PCI support (ie where the
- * PCI memory window will go if we add a PCI host controller).
- * 1GB and up is RAM (which may happily spill over into the
- * high memory region beyond 4GB).
- * This represents a compromise between how much RAM can be given to
- * a 32 bit VM and leaving space for expansion and in particular for PCI.
- * Note that devices should generally be placed at multiples of 0x10000,
- * to accommodate guests using 64K pages.
- */
-static const MemMapEntry a15memmap[] = {
-    /* Space up to 0x8000000 is reserved for a boot ROM */
-    [VIRT_FLASH] =              {          0, 0x00400000 },
-    [VIRT_MSM_RTC] =			{ 0x00902000, 0x00001000 },
-    [VIRT_MSM_SEC] =			{ 0x00706000, 0x00001000 },
-    [VIRT_CPUPERIPHS] =         { 0x08000000, 0x00020000 },
-    /* GIC distributor and CPU interfaces sit inside the CPU peripheral space */
-    [VIRT_GIC_DIST] =           { 0x08000000, 0x00010000 },
-    [VIRT_GIC_CPU] =            { 0x08010000, 0x00010000 },
-    [VIRT_GIC_V2M] =            { 0x08020000, 0x00001000 },
-    /* The space in between here is reserved for GICv3 CPU/vCPU/HYP */
-    [VIRT_GIC_ITS] =            { 0x08080000, 0x00020000 },
-    /* This redistributor space allows up to 2*64kB*123 CPUs */
-    [VIRT_GIC_REDIST] =         { 0x080A0000, 0x00F60000 },
-    [VIRT_UART] =               { 0x09000000, 0x00001000 },
-    [VIRT_RTC] =                { 0x09010000, 0x00001000 },
-    [VIRT_FW_CFG] =             { 0x09020000, 0x00000018 },
-    [VIRT_GPIO] =               { 0x09030000, 0x00001000 },
-    [VIRT_SECURE_UART] =        { 0x09040000, 0x00001000 },
-    [VIRT_MMIO] =               { 0x0a000000, 0x00000200 },
-    /* ...repeating for a total of NUM_VIRTIO_TRANSPORTS, each of that size */
-    [VIRT_PLATFORM_BUS] =       { 0x0c000000, 0x02000000 },
-    [VIRT_SECURE_MEM] =         { 0x0e000000, 0x01000000 },
-    [VIRT_PCIE_MMIO] =          { 0x10000000, 0x2eff0000 },
-    [VIRT_PCIE_PIO] =           { 0x3eff0000, 0x00010000 },
-    [VIRT_PCIE_ECAM] =          { 0x3f000000, 0x01000000 },
-    [VIRT_MEM] =                { 0x40000000, RAMLIMIT_BYTES },
-    /* Second PCIe window, 512GB wide at the 512GB boundary */
-    [VIRT_PCIE_MMIO_HIGH] =   { 0x8000000000ULL, 0x8000000000ULL },
-};
-
-static const int a15irqmap[] = {
-    [VIRT_UART] = 1,
-    [VIRT_RTC] = 2,
-    [VIRT_PCIE] = 3, /* ... to 6 */
-    [VIRT_GPIO] = 7,
-    [VIRT_SECURE_UART] = 8,
-    [VIRT_MMIO] = 16, /* ...to 16 + NUM_VIRTIO_TRANSPORTS - 1 */
-    [VIRT_GIC_V2M] = 48, /* ...to 48 + NUM_GICV2M_SPIS - 1 */
-    [VIRT_PLATFORM_BUS] = 112, /* ...to 112 + PLATFORM_BUS_NUM_IRQS -1 */
-};
+extern const int msm_irqmap[];
+extern const int msm_memmap[];
 
 static const char *valid_cpus[] = {
     ARM_CPU_TYPE_NAME("cortex-a15"),
@@ -842,14 +774,14 @@ static void create_one_flash(const char *name, hwaddr flashbase,
     DriveInfo *dinfo = drive_get_next(IF_PFLASH);
     DeviceState *dev = qdev_create(NULL, "cfi.pflash01");
     SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
-    const uint64_t sectorlength = 256 * 1024;
+    const uint64_t sectorlength = 128 * 1024;
 
     if (dinfo) {
         qdev_prop_set_drive(dev, "drive", blk_by_legacy_dinfo(dinfo),
                             &error_abort);
     }
 
-	printf("flashsize: %llx, sectorlength: %llx\n", flashsize, sectorlength);
+	fprintf(stderr,"flashsize: %llx, sectorlength: %llx\n", flashsize, sectorlength);
 
     qdev_prop_set_uint32(dev, "num-blocks", flashsize / sectorlength);
     qdev_prop_set_uint64(dev, "sector-length", sectorlength);
@@ -908,8 +840,6 @@ static void create_flash(const VirtMachineState *vms,
 
     create_one_flash("virt.flash0", flashbase, flashsize,
                      bios_name, secure_sysmem);
-    //create_one_flash("virt.flash1", flashbase + flashsize, flashsize,
-      //               NULL, sysmem);
 
     if (sysmem == secure_sysmem) {
         /* Report both flash devices as a single node in the DT */
@@ -922,28 +852,8 @@ static void create_flash(const VirtMachineState *vms,
         qemu_fdt_setprop_cell(vms->fdt, nodename, "bank-width", 4);
         g_free(nodename);
     } else {
-		printf("sysmem\n");
+		fprintf(stderr,"sysmem\n");
 		exit(1);
-        /* Report the devices as separate nodes so we can mark one as
-         * only visible to the secure world.
-         */
-        nodename = g_strdup_printf("/secflash@%" PRIx64, flashbase);
-        qemu_fdt_add_subnode(vms->fdt, nodename);
-        qemu_fdt_setprop_string(vms->fdt, nodename, "compatible", "cfi-flash");
-        qemu_fdt_setprop_sized_cells(vms->fdt, nodename, "reg",
-                                     2, flashbase, 2, flashsize);
-        qemu_fdt_setprop_cell(vms->fdt, nodename, "bank-width", 4);
-        qemu_fdt_setprop_string(vms->fdt, nodename, "status", "disabled");
-        qemu_fdt_setprop_string(vms->fdt, nodename, "secure-status", "okay");
-        g_free(nodename);
-
-        nodename = g_strdup_printf("/flash@%" PRIx64, flashbase);
-        qemu_fdt_add_subnode(vms->fdt, nodename);
-        qemu_fdt_setprop_string(vms->fdt, nodename, "compatible", "cfi-flash");
-        qemu_fdt_setprop_sized_cells(vms->fdt, nodename, "reg",
-                                     2, flashbase + flashsize, 2, flashsize);
-        qemu_fdt_setprop_cell(vms->fdt, nodename, "bank-width", 4);
-        g_free(nodename);
     }
 }
 
@@ -966,158 +876,6 @@ static FWCfgState *create_fw_cfg(const VirtMachineState *vms, AddressSpace *as)
     qemu_fdt_setprop(vms->fdt, nodename, "dma-coherent", NULL, 0);
     g_free(nodename);
     return fw_cfg;
-}
-
-static void create_pcie_irq_map(const VirtMachineState *vms,
-                                uint32_t gic_phandle,
-                                int first_irq, const char *nodename)
-{
-    int devfn, pin;
-    uint32_t full_irq_map[4 * 4 * 10] = { 0 };
-    uint32_t *irq_map = full_irq_map;
-
-    for (devfn = 0; devfn <= 0x18; devfn += 0x8) {
-        for (pin = 0; pin < 4; pin++) {
-            int irq_type = GIC_FDT_IRQ_TYPE_SPI;
-            int irq_nr = first_irq + ((pin + PCI_SLOT(devfn)) % PCI_NUM_PINS);
-            int irq_level = GIC_FDT_IRQ_FLAGS_LEVEL_HI;
-            int i;
-
-            uint32_t map[] = {
-                devfn << 8, 0, 0,                           /* devfn */
-                pin + 1,                                    /* PCI pin */
-                gic_phandle, 0, 0, irq_type, irq_nr, irq_level }; /* GIC irq */
-
-            /* Convert map to big endian */
-            for (i = 0; i < 10; i++) {
-                irq_map[i] = cpu_to_be32(map[i]);
-            }
-            irq_map += 10;
-        }
-    }
-
-    qemu_fdt_setprop(vms->fdt, nodename, "interrupt-map",
-                     full_irq_map, sizeof(full_irq_map));
-
-    qemu_fdt_setprop_cells(vms->fdt, nodename, "interrupt-map-mask",
-                           0x1800, 0, 0, /* devfn (PCI_SLOT(3)) */
-                           0x7           /* PCI irq */);
-}
-
-static void create_pcie(const VirtMachineState *vms, qemu_irq *pic)
-{
-    hwaddr base_mmio = vms->memmap[VIRT_PCIE_MMIO].base;
-    hwaddr size_mmio = vms->memmap[VIRT_PCIE_MMIO].size;
-    hwaddr base_mmio_high = vms->memmap[VIRT_PCIE_MMIO_HIGH].base;
-    hwaddr size_mmio_high = vms->memmap[VIRT_PCIE_MMIO_HIGH].size;
-    hwaddr base_pio = vms->memmap[VIRT_PCIE_PIO].base;
-    hwaddr size_pio = vms->memmap[VIRT_PCIE_PIO].size;
-    hwaddr base_ecam = vms->memmap[VIRT_PCIE_ECAM].base;
-    hwaddr size_ecam = vms->memmap[VIRT_PCIE_ECAM].size;
-    hwaddr base = base_mmio;
-    int nr_pcie_buses = size_ecam / PCIE_MMCFG_SIZE_MIN;
-    int irq = vms->irqmap[VIRT_PCIE];
-    MemoryRegion *mmio_alias;
-    MemoryRegion *mmio_reg;
-    MemoryRegion *ecam_alias;
-    MemoryRegion *ecam_reg;
-    DeviceState *dev;
-    char *nodename;
-    int i;
-    PCIHostState *pci;
-
-    dev = qdev_create(NULL, TYPE_GPEX_HOST);
-    qdev_init_nofail(dev);
-
-    /* Map only the first size_ecam bytes of ECAM space */
-    ecam_alias = g_new0(MemoryRegion, 1);
-    ecam_reg = sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0);
-    memory_region_init_alias(ecam_alias, OBJECT(dev), "pcie-ecam",
-                             ecam_reg, 0, size_ecam);
-    memory_region_add_subregion(get_system_memory(), base_ecam, ecam_alias);
-
-    /* Map the MMIO window into system address space so as to expose
-     * the section of PCI MMIO space which starts at the same base address
-     * (ie 1:1 mapping for that part of PCI MMIO space visible through
-     * the window).
-     */
-    mmio_alias = g_new0(MemoryRegion, 1);
-    mmio_reg = sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 1);
-    memory_region_init_alias(mmio_alias, OBJECT(dev), "pcie-mmio",
-                             mmio_reg, base_mmio, size_mmio);
-    memory_region_add_subregion(get_system_memory(), base_mmio, mmio_alias);
-
-    if (vms->highmem) {
-        /* Map high MMIO space */
-        MemoryRegion *high_mmio_alias = g_new0(MemoryRegion, 1);
-
-        memory_region_init_alias(high_mmio_alias, OBJECT(dev), "pcie-mmio-high",
-                                 mmio_reg, base_mmio_high, size_mmio_high);
-        memory_region_add_subregion(get_system_memory(), base_mmio_high,
-                                    high_mmio_alias);
-    }
-
-    /* Map IO port space */
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 2, base_pio);
-
-    for (i = 0; i < GPEX_NUM_IRQS; i++) {
-        sysbus_connect_irq(SYS_BUS_DEVICE(dev), i, pic[irq + i]);
-        gpex_set_irq_num(GPEX_HOST(dev), i, irq + i);
-    }
-
-    pci = PCI_HOST_BRIDGE(dev);
-    if (pci->bus) {
-        for (i = 0; i < nb_nics; i++) {
-            NICInfo *nd = &nd_table[i];
-
-            if (!nd->model) {
-                nd->model = g_strdup("virtio");
-            }
-
-            pci_nic_init_nofail(nd, pci->bus, nd->model, NULL);
-        }
-    }
-
-    nodename = g_strdup_printf("/pcie@%" PRIx64, base);
-    qemu_fdt_add_subnode(vms->fdt, nodename);
-    qemu_fdt_setprop_string(vms->fdt, nodename,
-                            "compatible", "pci-host-ecam-generic");
-    qemu_fdt_setprop_string(vms->fdt, nodename, "device_type", "pci");
-    qemu_fdt_setprop_cell(vms->fdt, nodename, "#address-cells", 3);
-    qemu_fdt_setprop_cell(vms->fdt, nodename, "#size-cells", 2);
-    qemu_fdt_setprop_cells(vms->fdt, nodename, "bus-range", 0,
-                           nr_pcie_buses - 1);
-    qemu_fdt_setprop(vms->fdt, nodename, "dma-coherent", NULL, 0);
-
-    if (vms->msi_phandle) {
-        qemu_fdt_setprop_cells(vms->fdt, nodename, "msi-parent",
-                               vms->msi_phandle);
-    }
-
-    qemu_fdt_setprop_sized_cells(vms->fdt, nodename, "reg",
-                                 2, base_ecam, 2, size_ecam);
-
-    if (vms->highmem) {
-        qemu_fdt_setprop_sized_cells(vms->fdt, nodename, "ranges",
-                                     1, FDT_PCI_RANGE_IOPORT, 2, 0,
-                                     2, base_pio, 2, size_pio,
-                                     1, FDT_PCI_RANGE_MMIO, 2, base_mmio,
-                                     2, base_mmio, 2, size_mmio,
-                                     1, FDT_PCI_RANGE_MMIO_64BIT,
-                                     2, base_mmio_high,
-                                     2, base_mmio_high, 2, size_mmio_high);
-    } else {
-        qemu_fdt_setprop_sized_cells(vms->fdt, nodename, "ranges",
-                                     1, FDT_PCI_RANGE_IOPORT, 2, 0,
-                                     2, base_pio, 2, size_pio,
-                                     1, FDT_PCI_RANGE_MMIO, 2, base_mmio,
-                                     2, base_mmio, 2, size_mmio);
-    }
-
-    qemu_fdt_setprop_cell(vms->fdt, nodename, "#interrupt-cells", 1);
-    create_pcie_irq_map(vms, vms->gic_phandle, irq, nodename);
-
-    g_free(nodename);
 }
 
 static void create_platform_bus(VirtMachineState *vms, qemu_irq *pic)
@@ -1159,28 +917,6 @@ static void create_platform_bus(VirtMachineState *vms, qemu_irq *pic)
     memory_region_add_subregion(sysmem,
                                 platform_bus_params.platform_bus_base,
                                 sysbus_mmio_get_region(s, 0));
-}
-
-static void create_secure_ram(VirtMachineState *vms,
-                              MemoryRegion *secure_sysmem)
-{
-    MemoryRegion *secram = g_new(MemoryRegion, 1);
-    char *nodename;
-    hwaddr base = vms->memmap[VIRT_SECURE_MEM].base;
-    hwaddr size = vms->memmap[VIRT_SECURE_MEM].size;
-
-    memory_region_init_ram(secram, NULL, "virt.secure-ram", size,
-                           &error_fatal);
-    memory_region_add_subregion(secure_sysmem, base, secram);
-
-    nodename = g_strdup_printf("/secram@%" PRIx64, base);
-    qemu_fdt_add_subnode(vms->fdt, nodename);
-    qemu_fdt_setprop_string(vms->fdt, nodename, "device_type", "memory");
-    qemu_fdt_setprop_sized_cells(vms->fdt, nodename, "reg", 2, base, 2, size);
-    qemu_fdt_setprop_string(vms->fdt, nodename, "status", "disabled");
-    qemu_fdt_setprop_string(vms->fdt, nodename, "secure-status", "okay");
-
-    g_free(nodename);
 }
 
 static void *machmyvirt_dtb(const struct arm_boot_info *binfo, int *fdt_size)
@@ -1253,28 +989,6 @@ static uint64_t myvirt_cpu_mp_affinity(VirtMachineState *vms, int idx)
     return arm_cpu_mp_affinity(idx, clustersz);
 }
 
-static void create_io_memdev(const VirtMachineState *vms,
-							MemoryRegion *mem,
-							int region,
-							MemoryRegionOps *dev_ops,
-							char *devname,
-							void *opaque)
-{
-    MemoryRegion *dev_mem;
-	hwaddr base, size;
-
-	base = vms->memmap[region].base;
-	size = vms->memmap[region].size;
-
-	printf("create my dev: %08x - %08x\n", (unsigned) base, (unsigned) size);
-
-	dev_mem = g_new(MemoryRegion, 1);
-
-    memory_region_init_io(dev_mem, NULL, dev_ops,
-        opaque, devname, size);
-    memory_region_add_subregion(mem, base, dev_mem);
-}
-
 static void machmyvirt_init(MachineState *machine)
 {
     VirtMachineState *vms = VIRT_MACHINE(machine);
@@ -1285,12 +999,15 @@ static void machmyvirt_init(MachineState *machine)
     MemoryRegion *sysmem = get_system_memory();
     MemoryRegion *secure_sysmem = NULL;
     int n, myvirt_max_cpus;
+#if 0
     MemoryRegion *ram = g_new(MemoryRegion, 1);
+#endif
+    MemoryRegion *rpm_ram = g_new(MemoryRegion, 1);
     bool firmware_loaded = bios_name || drive_get(IF_PFLASH, 0, 0);
 
 	if(vms->secure)
 	{
-		printf("secure\n");
+		fprintf(stderr,"secure\n");
 		exit(1);
 	}
 
@@ -1363,7 +1080,7 @@ static void machmyvirt_init(MachineState *machine)
     }
 
     if (vms->secure) {
-		printf("secure 2\n");
+		fprintf(stderr,"secure 2\n");
 		exit(1);
         if (kvm_enabled()) {
             error_report("mach-virt: KVM does not support Security extensions");
@@ -1444,12 +1161,15 @@ static void machmyvirt_init(MachineState *machine)
     fdt_add_cpu_nodes(vms);
     fdt_add_psci_node(vms);
 
+	fprintf(stderr,"RAM size: %d\n", machine->ram_size);
+
+#if 0
     memory_region_allocate_system_memory(ram, NULL, "mach-virt.ram",
                                          machine->ram_size);
     memory_region_add_subregion(sysmem, vms->memmap[VIRT_MEM].base, ram);
+#endif
 
-	create_io_memdev(vms, sysmem, VIRT_MSM_RTC, &msm_dev_rtc_ops, "msm_rtc.mem", (void*)0xDE35347C);
-	create_io_memdev(vms, sysmem, VIRT_MSM_SEC, &msm_dev_sec_ops, "msm_sec.mem", (void*)0xDE3535EC);
+	create_msm_peripherals(vms, sysmem);
 
     create_flash(vms, sysmem, secure_sysmem ? secure_sysmem : sysmem);
 
@@ -1459,14 +1179,11 @@ static void machmyvirt_init(MachineState *machine)
 
     create_uart(vms, pic, VIRT_UART, sysmem, serial_hds[0]);
 
-    if (vms->secure) {
-        create_secure_ram(vms, secure_sysmem);
-        create_uart(vms, pic, VIRT_SECURE_UART, secure_sysmem, serial_hds[1]);
-    }
+    memory_region_allocate_system_memory(rpm_ram, NULL, "mach-virt.rpm_ram",
+                                        vms->memmap[VIRT_MSM_RPM_RAM].size );
+    memory_region_add_subregion(sysmem, vms->memmap[VIRT_MSM_RPM_RAM].base, rpm_ram);
 
     create_rtc(vms, pic);
-
-    create_pcie(vms, pic);
 
     create_gpio(vms, pic);
 
@@ -1712,8 +1429,8 @@ static void myvirt_2_10_instance_init(Object *obj)
                                         NULL);
     }
 
-    vms->memmap = a15memmap;
-    vms->irqmap = a15irqmap;
+    vms->memmap = msm_memmap;
+    vms->irqmap = msm_irqmap;
 }
 
 static void myvirt_machine_2_10_options(MachineClass *mc)
