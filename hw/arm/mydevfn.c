@@ -19,11 +19,37 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <openssl/sha.h>
 
 #include "my_dev.h"
 
+#define MMCFILE "dmp/mmc"
+
 void printregs(void);
 static void write_sdc1_cmd(unsigned value);
+
+static int rpm_delay_state = 0;
+
+static uint64_t sdc_status = 0;
+static unsigned int sdc_cmd_arg = 0;
+
+static unsigned sdc_resp[4] = {0};
+static unsigned sdc_blocklen = 0x200;
+static unsigned sdc_datalen = 0;
+
+static unsigned char sdc_fifo_buf[0x4C000];
+static unsigned char *sdc_fifo_data = NULL;
+static unsigned int sdc_fifo_pos = 0;
+static unsigned int sdc_fifo_size = 0;
+
+static SHA_CTX sha_ctx;
+static SHA256_CTX sha2_ctx;
+static unsigned int sha_size = 0;
+static unsigned int sha_cfg = 0;
+static unsigned int sha_cnt = 0;
+static unsigned int sha_state = 0;
+static unsigned cmd8_state = 0;
+unsigned char sha_hash[32];
 
 void printregs(void)
 {
@@ -84,7 +110,6 @@ uint64_t devfn_secure_read(void *vms_, hwaddr offset,
     return v;
 }
 
-static int rpm_delay_state = 0;
 void devfn_rpm_write(void *vms_, hwaddr offset,
                          uint64_t value, unsigned size)
 {
@@ -107,10 +132,9 @@ uint64_t devfn_rpm_read(void *vms_, hwaddr offset,
                             unsigned size)
 {
 	uint64_t v = 0;
+	static uint32_t val = 0;
 
 	printregs();
-    fprintf(stderr,"%6x: dev rpm(): READ (%d) at %s", 
-			ARM_CPU(qemu_get_cpu(0))->env.regs[15], size, FINDREG(rpm, offset));
 	switch(offset)
 	{
 	case 0x2004:
@@ -120,45 +144,47 @@ uint64_t devfn_rpm_read(void *vms_, hwaddr offset,
 		case 0:
 			rpm_delay_state = 1;
 			v = 0;
+			val = 0;
 			break;
 		case 1:
-			v = 0x7fffffff;
+			v = val;
+			val += 8;
 			break;
 		default:
 			break;
 		}
 		break;
 	default:
+		fprintf(stderr,"%6x: dev rpm(): READ (%d) at %s", 
+				ARM_CPU(qemu_get_cpu(0))->env.regs[15], size, FINDREG(rpm, offset));
 		v = 0;
+		fprintf(stderr, " -> %8x\n", (unsigned)v);
 		break;
 	}
-	fprintf(stderr, " -> %8x\n", (unsigned)v);
 
     return v;
 }
 
-static uint64_t sdc_status = 0;
-static unsigned int sdc_cmd_arg = 0;
-
-static unsigned sdc_resp[4] = {0};
-static unsigned sdc_blocklen = 0x200;
-static unsigned sdc_datalen = 0;
-
-static unsigned char sdc_fifo_buf[0x40000];
-static unsigned char *sdc_fifo_data = NULL;
-static unsigned int sdc_fifo_pos = 0;
-static unsigned int sdc_fifo_size = 0;
-
 static unsigned int sdc_read_status(void)
 {
 	unsigned v;
+	unsigned avail = (sdc_fifo_size - sdc_fifo_pos);
 
 	v = sdc_status;
-	if (sdc_fifo_pos < sdc_fifo_size)
+	if (avail)
 	{
-		v |= 0x200000;
+		v |= 1<<21; // rx available
+	}
+	if (avail >= 16)
+	{
+		v |= 1<<15; // rxfifo half full
+	}
+	if (avail >= 32)
+	{
+		v |= 1<<17; // rxfifo full
 	}
 	sdc_status = 0;
+
 
 	return v;
 }
@@ -190,8 +216,6 @@ static unsigned read_sdc_fifo(void)
 	}
 	return v;
 }
-
-#define MMCFILE "dmp/mmc"
 
 static void sdc_read_block(unsigned addr, unsigned size)
 {
@@ -240,6 +264,8 @@ void devfn_sdc1_write(void *vms_, hwaddr offset,
 	case 0x28:
 		sdc_datalen = (unsigned)value;
 		break;
+	case 0x38:
+		break;
 	default:
 		break;
 	}
@@ -258,8 +284,8 @@ uint64_t devfn_sdc1_read(void *vms_, hwaddr offset,
 		fprintf(stderr,"%6x: dev sdc(): READ (%d) at %s", 
 				ARM_CPU(qemu_get_cpu(0))->env.regs[15], size, FINDREG(sdc1, offset));
 		ridx = (offset-0x14)>>2;
-		fprintf(stderr, "\nsdc read_response(%d)\n", ridx);
 		v = sdc_resp[ridx];
+		fprintf(stderr, "\nsdc read_response(%d) -> %08x\n", ridx, v);
 		break;
 	case 0x34: // status
 		//fprintf(stderr,"%6x: dev sdc(): READ (%d) at %s\n", 
@@ -267,11 +293,15 @@ uint64_t devfn_sdc1_read(void *vms_, hwaddr offset,
 		fprintf(stderr, "?");
 		fflush(stderr);
 		v = sdc_read_status();
+		//fprintf(stderr, "SDC Status: %08x\n", v);
 		break;
 	case 0x80: case 0x84: case 0x88: case 0x8c:
 	case 0x90: case 0x94: case 0x98: case 0x9c:
-		fprintf(stderr, "+");
+		fprintf(stderr, ">");
+		//fprintf(stderr,"%6x: dev sdc(): READ fifo", 
+		//		ARM_CPU(qemu_get_cpu(0))->env.regs[15]);
 		v = read_sdc_fifo();
+		//fprintf(stderr, " -> %8x\n", v);
 		break;
 	default:
 		fprintf(stderr,"%6x: dev sdc(): READ (%d) at %s", 
@@ -314,11 +344,19 @@ static void write_sdc1_cmd(unsigned value)
 		case 2:
 			fprintf(stderr, "CMD2: ALL_SEND_CID\n");
 			sdc_status = 0x40;
-			sdc_resp[0] = 0;
+			sdc_resp[0] = 0xFEFFFF30;
+			sdc_resp[1] = '1234';
+			sdc_resp[2] = 0x35fFFFFF;
+			sdc_resp[3] = 0xFFFFFFFF;
 			break;
 		case 3:
 			fprintf(stderr, "CMD3: SEND_RELATIVE_ADDRESS\n");
 			sdc_status = 0x40;
+			sdc_resp[0] = 0;
+			break;
+		case 6:
+			fprintf(stderr, "CMD6: ???\n");
+			sdc_status = 0x81;
 			sdc_resp[0] = 0;
 			break;
 		case 7:
@@ -328,7 +366,15 @@ static void write_sdc1_cmd(unsigned value)
 			break;
 		case 8:
 			fprintf(stderr, "CMD8: SEND_IF_CONF\n");
-			sdc_status = 0x40;
+			if (cmd8_state == 0)
+			{
+				sdc_status = 0x40;
+				cmd8_state = 1;
+			}
+			else
+			{
+				sdc_status = 0x81;
+			}
 			sdc_resp[0] = 0x1aa;
 			break;
 		case 9:
@@ -337,10 +383,19 @@ static void write_sdc1_cmd(unsigned value)
 			//sdc_resp[0] = 0x80000000;
 			//sdc_resp[1] = 0x00090000 ;
 			//sdc_resp[2] = 0x19000000 ;
-			sdc_resp[0] = 0x80000000;
-			sdc_resp[1] = 0x000F0000 ;
-			sdc_resp[2] = 0x19000000 ;
+#if 0
+			sdc_resp[0]=( 0x80000000	// ?
+						| 0x10000000); // ? reserved = 4
+			sdc_resp[1] = 0x000F00cf ;
+			sdc_resp[2] = 0xd9010000 ;
 			sdc_resp[3] = 0 ;
+#else
+			sdc_resp[0]=( 0x80000000	// ?
+						| 0x10000000); // ? reserved = 4
+			sdc_resp[1] = 0x000F00cf ;
+			sdc_resp[2] = 0xd9038000 ;
+			sdc_resp[3] = 0 ;
+#endif
 			break;
 		case 12:
 			fprintf(stderr, "CMD12: STOP_TRANSMISSION\n");
@@ -372,6 +427,11 @@ static void write_sdc1_cmd(unsigned value)
 			sdc_status = 0x40;
 			sdc_resp[0] = 0;
 			sdc_read_block(sdc_cmd_arg, sdc_datalen);
+			break;
+		case 23:
+			fprintf(stderr, "CMD%d: SET_ERASE_COUNT: 0x%x\n", c, sdc_cmd_arg);
+			sdc_status = 0x40;
+			sdc_resp[0] = 0;
 			break;
 		case 41:
 			fprintf(stderr, "ACMD41: SD_SEND_OP_COND\n");
@@ -425,17 +485,23 @@ uint64_t devfn_coproc_read(void *vms_, hwaddr offset,
 {
 	uint64_t v = 0;
 
-    fprintf(stderr,"%6x: dev coproc(): READ (%d) at %s", 
-			ARM_CPU(qemu_get_cpu(0))->env.regs[15], size, FINDREG(coproc, offset));
+//    fprintf(stderr,"%6x: dev coproc(): READ (%d) at %s", 
+//			ARM_CPU(qemu_get_cpu(0))->env.regs[15], size, FINDREG(coproc, offset));
 	switch(offset)
 	{
+	case 8:
+		
 	case 0x100:
 		v = 0x1C06;
 		break;
 	default:
 		break;
 	}
-	fprintf(stderr, " -> %8x\n", (unsigned)v);
+	if (offset >= 0x450 && offset < 0x470)
+	{
+		v = *(unsigned*)&sha_hash[offset-0x450];
+	}
+//	fprintf(stderr, " -> %8x\n", (unsigned)v);
 
     return v;
 }
@@ -443,7 +509,158 @@ uint64_t devfn_coproc_read(void *vms_, hwaddr offset,
 void devfn_coproc_write(void *vms_, hwaddr offset,
                          uint64_t value, unsigned size)
 {
-    fprintf(stderr,"%6x: dev coproc(): WRITE(%d) at %s -> %8x\n",
+	unsigned char b[4];
+	unsigned n,i,v,sz;
+
+//    fprintf(stderr,"%6x: dev coproc(): WRITE(%d) at %s -> %8x\n",
+//			ARM_CPU(qemu_get_cpu(0))->env.regs[15],
+//			size, FINDREG(coproc,offset),(unsigned)value );
+	switch(offset)
+	{
+	case 8:
+		if (sha_size && sha_state)
+		{
+			n = sha_size;
+			if (n > 4) n = 4;
+			b[0]=0xff&(value>>24);
+			b[1]=0xff&(value>>16);
+			b[2]=0xff&(value>>8);
+			b[3]=0xff&(value>>0);
+//			fprintf(stderr, "(update %d/%d: ",n,sha_size);
+			//for(i=0;i<n;i++)fprintf(stderr,"%02x ", b[i]);
+			if (sha_state == 2)
+			{
+				SHA256_Update(&sha2_ctx, &b, n);
+			}
+			else
+			{
+				SHA1_Update(&sha_ctx, &b, n);
+			}
+			sha_size -= n;
+			sha_cnt += n;
+			if (!sha_size && (sha_cfg & 0x4000))
+			{
+				fprintf(stderr, "(SHA final %d)\n",sha_cnt);
+				if (sha_state == 2)
+				{
+					SHA256_Final(sha_hash, &sha2_ctx);
+					sz = 32;
+				}
+				else{
+					SHA1_Final(sha_hash, &sha_ctx);
+					sz = 20;
+				}
+				for (i=0;i<sz;i+=4)
+				{
+					v = sha_hash[i];
+					sha_hash[i] = sha_hash[i+3];
+					sha_hash[i+3] = v;
+					v = sha_hash[i+1];
+					sha_hash[i+1] = sha_hash[i+2];
+					sha_hash[i+2] = v;
+				}
+				sha_state = 0;
+			}
+		}
+		break;
+	case 0x400:
+		sha_cfg = value;
+		if (sha_state == 0)
+		{
+			sha_cnt = 0;
+			if (sha_cfg & 0x200)
+			{
+				fprintf(stderr, "(SHA2 init)\n");
+				SHA256_Init(&sha2_ctx);
+				sha_state = 2;
+			}
+			else
+			{
+				fprintf(stderr, "(SHA1 init)\n");
+				SHA1_Init(&sha_ctx);
+				sha_state = 1;
+			}
+		}
+		break;
+	case 0x404:
+		sha_size = value;
+		break;
+	default:
+		break;
+	}
+}
+
+uint64_t devfn_uart_read(void *vms_, hwaddr offset,
+                            unsigned size)
+{
+	uint64_t v = 0;
+
+#if 0
+    fprintf(stderr,"%6x: dev uart(1a040000): READ (%d) at %s", 
+			ARM_CPU(qemu_get_cpu(0))->env.regs[15], size, FINDREG(uart, offset));
+#endif
+	switch(offset)
+	{
+	case 0x8:
+		/* SR: TXRDY */
+		v = 0x4;
+		break;
+	case 0x14:
+		/* ISR: TX_READY */
+		v = 0x80;
+		break;
+	default:
+		break;
+	}
+//	fprintf(stderr, " -> %8x\n", (unsigned)v);
+
+    return v;
+}
+
+void devfn_uart_write(void *vms_, hwaddr offset,
+                         uint64_t value, unsigned size)
+{
+	static unsigned ccnt = 0;
+	char c;
+
+	switch(offset)
+	{
+	case 0x70:
+		c = (char)value;
+		if (!ccnt)
+		{
+			fprintf(stderr, "[UART] ");
+		}
+		fprintf(stderr, "%c",c);
+		ccnt++;
+		if (c == '\n')
+		{
+			ccnt = 0;
+		}
+	}
+#if 0
+    fprintf(stderr,"%6x: dev uart(1a040000): WRITE(%d) at %s -> %8x\n",
 			ARM_CPU(qemu_get_cpu(0))->env.regs[15],
-			size, FINDREG(coproc,offset),(unsigned)value );
+			size, FINDREG(uart,offset),(unsigned)value );
+#endif
+}
+
+uint64_t devfn_clk_ctl_read(void *vms_, hwaddr offset,
+                            unsigned size)
+{
+	uint64_t v = 0;
+
+    fprintf(stderr,"%6x: dev clk_ctl(00900000): READ (%d) at %s", 
+			ARM_CPU(qemu_get_cpu(0))->env.regs[15], size, FINDREG(clk_ctl, offset));
+	switch(offset)
+	{
+	case 0x3420:
+		v = 0x600;
+		break;
+	default:
+		break;
+	}
+	fprintf(stderr, " -> %8x\n", (unsigned)v);
+
+    return v;
 }

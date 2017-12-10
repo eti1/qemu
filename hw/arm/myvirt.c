@@ -796,7 +796,11 @@ static void machmyvirt_init(MachineState *machine)
 #if 0
     MemoryRegion *ram = g_new(MemoryRegion, 1);
 #endif
-    MemoryRegion *rpm_ram = g_new(MemoryRegion, 1);
+    MemoryRegion *rpm_ram, *iram, *hram;
+
+	rpm_ram = g_new(MemoryRegion, 1);
+	iram = g_new(MemoryRegion, 1);
+	hram = g_new(MemoryRegion, 1);
 
 	if (!bios_name)
 	{
@@ -926,11 +930,23 @@ static void machmyvirt_init(MachineState *machine)
 
     fdt_add_pmu_nodes(vms);
 
-	/* Load ROM, create boot flash and pheripherals*/
+	/* Load ROM, create boot ram and pheripherals*/
     create_flash(vms, sysmem);
+	/* rpm ram */
     memory_region_allocate_system_memory(rpm_ram, NULL, "mach-virt.rpm_ram",
                                         vms->memmap[VIRT_RPM_RAM].size );
     memory_region_add_subregion(sysmem, vms->memmap[VIRT_RPM_RAM].base, rpm_ram);
+	/* iram */
+    memory_region_allocate_system_memory(iram, NULL, "mach-virt.iram",
+                                        vms->memmap[VIRT_IRAM].size );
+    memory_region_add_subregion(sysmem, vms->memmap[VIRT_IRAM].base, iram);
+
+#if 1
+    memory_region_allocate_system_memory(hram, NULL, "mach-virt.hram",
+                                        vms->memmap[VIRT_HRAM].size );
+    memory_region_add_subregion(sysmem, vms->memmap[VIRT_HRAM].base, hram);
+#endif
+
 	create_my_peripherals(vms, sysmem);
 
     create_rtc(vms, pic);
